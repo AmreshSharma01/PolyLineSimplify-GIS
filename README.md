@@ -10,6 +10,9 @@ PolyLineSimplify GIS allows users to draw polylines on a map and apply the Dougl
 
 Try the application online: [PolyLineSimplify GIS Demo](https://amreshsharma01.github.io/PolyLinesSimplify-GIS/)
 
+## Project Visual Walkthrough
+![Project Walkthrough](PolyLineSimplify GIS - ENGO651 Lab 6 - visual walkthrough.png)
+
 ## Features
 
 - Interactive map interface for drawing polylines
