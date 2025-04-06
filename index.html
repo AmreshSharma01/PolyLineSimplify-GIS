@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ENGO651 Lab 6 - Line Simplification</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    
+    <!-- Leaflet Draw CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    
+    <style>
+        /* Main container styling */
+        .container-fluid {
+            padding: 20px;
+        }
+        
+        /* Map container styling */
+        #map {
+            height: 600px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        /* Controls panel styling */
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        
+        /* Instructions panel styling */
+        #instructions {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        /* Status message styling */
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- Main container -->
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <h1 class="text-center">ENGO651 Lab 6 - Line Simplification</h1>
+                <p class="text-center lead">Draw a polyline on the map and simplify it using Turf.js</p>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-12 position-relative">
+                <!-- Map control buttons -->
+                <div id="controls" class="d-flex flex-column">
+                    <button id="simplifyBtn" class="btn btn-primary mb-2" onclick="simplifyLine()">Simplify Line</button>
+                    <button id="clearBtn" class="btn btn-secondary" onclick="clearLines()">Clear Lines</button>
+                    
+                    <!-- Tolerance slider -->
+                    <div class="mt-3">
+                        <label for="toleranceSlider" class="form-label">Tolerance: <span id="toleranceValue">0.01</span></label>
+                        <input type="range" class="form-range" id="toleranceSlider" min="0.001" max="0.1" step="0.001" value="0.01" oninput="updateToleranceValue(this.value)">
+                    </div>
+                    
+                    <!-- Status message area -->
+                    <div id="status" class="mt-2"></div>
+                </div>
+                
+                <!-- Map container -->
+                <div id="map"></div>
+            </div>
+        </div>
+        
+        <!-- Instructions section -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div id="instructions">
+                    <h4>How to use:</h4>
+                    <ol>
+                        <li>Use the draw tools (top right) to draw a polyline on the map</li>
+                        <li>Click the "Simplify Line" button to create a simplified version (shown in red)</li>
+                        <li>Adjust the tolerance slider to control the level of simplification</li>
+                        <li>Use "Clear Lines" to remove all lines and start over</li>
+                    </ol>
+                    <p><strong>Line Statistics:</strong> <span id="lineStats">No line drawn yet</span></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    
+    <!-- Leaflet Draw JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    
+    <!-- Turf.js for geospatial analysis -->
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+    
+    <script>
+        // =======================================
+        // Global variables
+        // =======================================
+        
+        // Map and layer variables
+        var map = null;           // Leaflet map object
+        var drawnLayer = null;    // Layer for storing user-drawn polyline
+        var originalGeoJSON = null; // GeoJSON representation of the drawn polyline
+        var simplifiedLayer = null; // Layer for storing simplified polyline
+        
+        // =======================================
+        // Map Initialization
+        // =======================================
+        
+        /**
+         * Initialize the map and add base layers
+         */
+        function initMap() {
+            // Create map centered on Calgary
+            map = L.map('map').setView([51.0447, -114.0719], 13);
+            
+            // Add OpenStreetMap tile layer
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Initialize drawing controls
+            initDrawControls();
+        }
+        
+        /**
+         * Initialize drawing controls and related event handlers
+         */
+        function initDrawControls() {
+            // Configure draw control options
+            var drawControl = new L.Control.Draw({
+                draw: {
+                    // Only enable polyline drawing
+                    polyline: {
+                        shapeOptions: {
+                            color: '#3388ff',
+                            weight: 4
+                        }
+                    },
+                    polygon: false,
+                    rectangle: false,
+                    circle: false,
+                    marker: false,
+                    circlemarker: false
+                },
+                edit: false // Disable editing for simplicity
+            });
+            
+            // Add draw control to map
+            map.addControl(drawControl);
+            
+            // Event handler for when a drawing is completed
+            map.on('draw:created', function (e) {
+                var layer = e.layer;
+                
+                // Remove existing drawn line if present
+                if (drawnLayer) {
+                    map.removeLayer(drawnLayer);
+                }
+                
+                // Store and display the new line
+                drawnLayer = layer;
+                map.addLayer(drawnLayer);
+                
+                // Convert the drawn polyline to GeoJSON format
+                var coords = layer.getLatLngs().map(ll => [ll.lng, ll.lat]);
+                originalGeoJSON = {
+                    type: "Feature",
+                    geometry: {
+                        type: "LineString",
+                        coordinates: coords
+                    },
+                    properties: {}
+                };
+                
+                // Update the line statistics
+                updateLineStats(originalGeoJSON);
+                
+                // Show success message
+                showStatus('Line drawn successfully! Click "Simplify Line" to simplify.', 'success');
+            });
+        }
+        
+        // =======================================
+        // Line Simplification Functions
+        // =======================================
+        
+        /**
+         * Simplify the drawn polyline using Turf.js
+         */
+        function simplifyLine() {
+            // Check if a line has been drawn
+            if (!originalGeoJSON) {
+                showStatus('Please draw a line first!', 'warning');
+                return;
+            }
+            
+            // Get current tolerance value from slider
+            var tolerance = parseFloat(document.getElementById('toleranceSlider').value);
+            
+            // Simplify the line using Turf.js
+            var options = { tolerance: tolerance, highQuality: false };
+            var simplified = turf.simplify(originalGeoJSON, options);
+            
+            // Remove existing simplified line if present
+            if (simplifiedLayer) {
+                map.removeLayer(simplifiedLayer);
+            }
+            
+            // Convert coordinates back to Leaflet format and display simplified line
+            var simplifiedCoords = simplified.geometry.coordinates.map(c => L.latLng(c[1], c[0]));
+            simplifiedLayer = L.polyline(simplifiedCoords, { 
+                color: 'red', 
+                weight: 4,
+                dashArray: '5, 10'
+            }).addTo(map);
+            
+            // Update line statistics and show comparison
+            updateLineStats(originalGeoJSON, simplified);
+            
+            // Show success message with point reduction info
+            var originalPoints = originalGeoJSON.geometry.coordinates.length;
+            var simplifiedPoints = simplified.geometry.coordinates.length;
+            var reduction = Math.round((1 - simplifiedPoints/originalPoints) * 100);
+            
+            showStatus(`Line simplified successfully! Reduced by ${reduction}% (${originalPoints} → ${simplifiedPoints} points)`, 'success');
+        }
+        
+        /**
+         * Clear all lines from the map and reset variables
+         */
+        function clearLines() {
+            // Remove layers from map
+            if (drawnLayer) {
+                map.removeLayer(drawnLayer);
+                drawnLayer = null;
+            }
+            
+            if (simplifiedLayer) {
+                map.removeLayer(simplifiedLayer);
+                simplifiedLayer = null;
+            }
+            
+            // Reset variables
+            originalGeoJSON = null;
+            
+            // Reset line statistics
+            document.getElementById('lineStats').textContent = 'No line drawn yet';
+            
+            // Show info message
+            showStatus('All lines cleared. You can draw a new line now.', 'info');
+        }
+        
+        // =======================================
+        // UI Helper Functions
+        // =======================================
+        
+        /**
+         * Update the displayed tolerance value
+         * @param {string} value - The new tolerance value
+         */
+        function updateToleranceValue(value) {
+            document.getElementById('toleranceValue').textContent = value;
+            
+            // If a line is already simplified, re-simplify with new tolerance
+            if (originalGeoJSON && simplifiedLayer) {
+                simplifyLine();
+            }
+        }
+        
+        /**
+         * Show a status message to the user
+         * @param {string} message - The message to display
+         * @param {string} type - Message type (success, warning, danger, info)
+         */
+        function showStatus(message, type) {
+            var statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+            
+            // Remove any existing classes
+            statusDiv.className = '';
+            
+            // Add appropriate Bootstrap class
+            statusDiv.classList.add('alert', `alert-${type}`);
+            
+            // Hide the message after 5 seconds
+            setTimeout(function() {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+        
+        /**
+         * Update the line statistics display
+         * @param {Object} original - Original GeoJSON feature
+         * @param {Object} simplified - Simplified GeoJSON feature (optional)
+         */
+        function updateLineStats(original, simplified = null) {
+            var statsElement = document.getElementById('lineStats');
+            var originalPoints = original.geometry.coordinates.length;
+            var originalLength = turf.length(original, {units: 'kilometers'}).toFixed(2);
+            
+            let statsText = `Original line: ${originalPoints} points, ${originalLength} km length`;
+            
+            if (simplified) {
+                var simplifiedPoints = simplified.geometry.coordinates.length;
+                var simplifiedLength = turf.length(simplified, {units: 'kilometers'}).toFixed(2);
+                var pointReduction = Math.round((1 - simplifiedPoints/originalPoints) * 100);
+                
+                statsText += ` | Simplified line: ${simplifiedPoints} points, ${simplifiedLength} km length (${pointReduction}% reduction)`;
+            }
+            
+            statsElement.textContent = statsText;
+        }
+
+        // Initialize the map when the page loads
+        window.onload = initMap;
+    </script>
+</body>
+</html>
